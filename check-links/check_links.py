@@ -23,6 +23,7 @@ LINK_PATTERN = re.compile(r'(?<!\!)\[.*?\]\((.*?)\)')  # Match Markdown links ex
 TEMPLATE_TAG_PATTERN = re.compile(r'{{[%<].*?[%>]}}')  # Match template tags
 REFERENCE_LINK_PATTERN = re.compile(r'^\[.*?\]:\s*(.*?)$', re.MULTILINE)
 
+
 # List of URL schemes to skip
 SKIP_LINKS = [
     "mailto:",  # Skip mailto links
@@ -154,9 +155,13 @@ def process_link(file_path, link_to_find_rel_to_file, base_url='http://localhost
     
     if is_url(link_to_find_rel_to_file):
         return # Skip URLs for now
-    
+
     # Normalize the input file_path to use forward slashes and make absolute
     file_path = os.path.abspath(file_path).replace('\\', '/')
+
+    # Markdown extensions shouldn't be in the link so error accordingly.
+    if '.md' in link_to_find_rel_to_file:
+        print(f"Broken url ('.md' extension present): {link_to_find_rel_to_file} Path: {file_path}")
     
     # Find the relative part of the file_path starting from root_path
     if root_path not in file_path:
@@ -198,13 +203,33 @@ def process_link(file_path, link_to_find_rel_to_file, base_url='http://localhost
     
     return full_url
 
+# Function to check if the line starts a fenced code block
+def is_fenced_code_block(line):
+    """Detects if the line starts with a fenced code block."""
+    return line.strip().startswith("```")
+
+
+def is_in_comment_block(line, in_comment_block):
+    """Checks if we're inside a comment block (multi-line) based on the line."""
+    if "<!--" in line and "-->" in line: # Single-line comment block
+        in_comment_block = True  # Start of a comment block
+    else:
+        if "<!--" in line and not in_comment_block:
+            in_comment_block = True
+        if "-->" in line and in_comment_block:
+            in_comment_block = False  # End of a comment block
+
+    return in_comment_block
+
 
 def check_links_in_file(file_path):
     """Check all links in a Markdown file."""
+    
     with open(file_path, 'r', encoding='utf-8') as file:
         content = file.readlines()
 
     in_code_block = False
+    in_comment_block = False
 
     #print(f"Reading': {file.name}")
 
@@ -216,22 +241,20 @@ def check_links_in_file(file_path):
         if TEMPLATE_TAG_PATTERN.search(line):
             continue
         
-        # Handle inline comments on the same line
-        if "<!--" in line and "-->" in line:
-            continue  # Skip inline comments
-
-        # Handle code blocks and comments
-        if line.startswith("```") or line.startswith("<!--") or line.startswith("-->"):
+        if is_fenced_code_block(line):
             in_code_block = not in_code_block
-            #print(f"Code block toggled by '{line}': {line_index} to state {in_code_block}")
-            continue
+            continue  # Skip the line itself, because we already handled the block state toggle
 
-        if in_code_block:
+        # Handle multi-line HTML comments
+        in_comment_block = is_in_comment_block(line, in_comment_block)
+
+        # Skip lines inside fenced code blocks or multi-line HTML comments
+        if in_code_block or in_comment_block:
             continue
 
         # Find and process all links in the line
         # Process inline links
-        for link in LINK_PATTERN.findall(line):
+        for link in LINK_PATTERN.findall(line):                
             link = link.strip()
 
             if should_skip(link):
